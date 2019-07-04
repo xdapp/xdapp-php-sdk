@@ -1,0 +1,20 @@
+{
+  "name": "xdapp/service-register",
+  "minimum-stability": "stable",
+  "authors": [
+    {
+      "name": "汪强",
+      "email": "jonwang@xindong.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "XDApp\\ServiceReg\\": "src/"
+    }
+  },
+  "require": {
+    "php": "^7.0.0",
+    "ext-swoole": ">= 1.9",
+    "hprose/hprose": "dev-master"
+  }
+}
