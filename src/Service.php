@@ -450,6 +450,8 @@ class Service extends \Hprose\Service {
             $this->warn(new \Exception('服务器已注册, 但是又重复调用了setRegSuccess()方法'));
             return;
         }
+        $this->regSuccess  = true;
+        $this->isRegError  = false;
         $this->serviceData = $data;
         $this->info("RPC服务注册成功，服务名: {$this->appName}->{$this->serviceName}");
     }
