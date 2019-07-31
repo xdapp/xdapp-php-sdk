@@ -11,10 +11,7 @@ XDAppRPC服务SDK
 {
   "require": {
     "xdapp/service-register": "~1.0"
-  },
-  "repositories": [
-    { "type": "composer", "url": "https://packagist.xdapp.com/" }
-  ]
+  }
 }
 ```
 
