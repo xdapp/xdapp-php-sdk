@@ -151,6 +151,10 @@ return new class {
         }
     }
 
+    public function ping() {
+        return true;
+    }
+
     /**
      * 返回所有注册的名称
      *

@@ -380,7 +380,7 @@ class Service extends \Hprose\Service {
             $this->client = null;
             $this->regSuccess = false;
 
-            $this->log('Rpc server close connection' . ($this->isRegError ? '' : ', reconnect after 1 second.'));
+            $this->log('RPC 连接已断开' . ($this->isRegError ? ', 请重启服务' : ', 1秒后自动重连.'));
             if (!$this->isRegError) {
                 \Swoole\Timer::after(1000, function() {
                     $this->connectTo($this->host, $this->port, $this->option);
@@ -454,6 +454,39 @@ class Service extends \Hprose\Service {
         $this->isRegError  = false;
         $this->serviceData = $data;
         $this->info("RPC服务注册成功，服务名: {$this->appName}->{$this->serviceName}");
+
+        $allService = [
+            'sys'     => [],
+            'service' => [],
+            'other'   => [],
+        ];
+        foreach ($this->getNames() as $item) {
+            if ($item === '#')continue;
+            $pos = strpos($item, '_');
+            if (false === $pos) {
+                $allService['other'][] = $item;
+                continue;
+            }
+            list($type, $func) = explode('_', $item, 2);
+            $name = str_replace('_', '.', $func) . '()';
+            switch ($type) {
+                case 'sys':
+                    $allService['sys'][] = $name;
+                    break;
+                case $this->serviceName:
+                    $allService['service'][] = $name;
+                    break;
+                default:
+                    $allService['other'][] = $name;
+                    break;
+            }
+        }
+        $this->info('系统RPC: '. implode(', ', $allService['sys']));
+        $this->info('已暴露服务RPC: '. implode(', ', $allService['service']));
+        if (count($allService['other']) > 0) {
+            $this->info('已暴露但XDApp不会调用的RPC：'. implode(', ', $allService['other']));
+            $this->info("若需要这些方法暴露给XDApp服务使用，请加: {$this->serviceName} 前缀");
+        }
     }
 
     /**
