@@ -361,29 +361,25 @@ class Service extends \Hprose\Service {
             }
         });
 
-        $client->on("error", function($cli) {
-            $this->warn('connection error');
-            $this->client = null;
-            if ($this->regSuccess === false) {
-                return;
-            }
-
+        $client->on("error", function($cli) use ($port, $host, $option) {
+            $this->client     = null;
             $this->regSuccess = false;
 
+            $this->log('RPC 连接失败' . ($this->isRegError ? ', 请重启服务' : ', 1秒后自动重连.'));
             if (!$this->isRegError) {
-                \Swoole\Timer::after(1000, function() {
-                    $this->connectTo($this->host, $this->port, $this->option);
+                \Swoole\Timer::after(1000, function() use ($port, $host, $option) {
+                    $this->connectTo($port, $host, $option);
                 });
             }
         });
-        $client->on("close", function($cli) {
+        $client->on("close", function($cli) use ($port, $host, $option) {
             $this->client = null;
             $this->regSuccess = false;
 
             $this->log('RPC 连接已断开' . ($this->isRegError ? ', 请重启服务' : ', 1秒后自动重连.'));
             if (!$this->isRegError) {
-                \Swoole\Timer::after(1000, function() {
-                    $this->connectTo($this->host, $this->port, $this->option);
+                \Swoole\Timer::after(1000, function() use ($port, $host, $option) {
+                    $this->connectTo($port, $host, $option);
                 });
             }
         });

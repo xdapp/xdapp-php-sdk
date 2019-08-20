@@ -78,7 +78,8 @@ return new class {
         $context = Service::getCurrentContext();
         if (!$context)return;
 
-        if (!$context->service->isRegSuccess()) {
+        if ($context->service->isRegSuccess()) {
+            # 已注册成功
             return;
         }
 
@@ -109,7 +110,6 @@ return new class {
             // 断开连接
             $service->client->close();
             $service->warn("RPC服务注册失败，返回验证错误");
-
             return;
         }
 
