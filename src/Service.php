@@ -39,13 +39,18 @@ class Service extends \Hprose\Service {
     protected static $logger;
 
     protected static $ProductionServer = [
-        'host' => 'www.xdapp.com',
+        'host' => 'service-gcp.xdapp.com',
         'port' => 8900,
     ];
 
     protected static $DevServer = [
-        'host' => 'dev.xdapp.com',
+        'host' => 'service-dev.xdapp.com',
         'port' => 8100,
+    ];
+
+    protected static $GlobalServer = [
+        'host' => 'service-gcp.xdapp.com',
+        'port' => 8900,
     ];
 
     const FLAG_SYS_MSG     = 1;     # 来自系统调用的消息请求
@@ -119,10 +124,21 @@ class Service extends \Hprose\Service {
     }
 
     /**
-     * 连接到生产环境
+     * 连接到国内生产环境
      */
     public function connectToProduce() {
         return $this->connectTo(null, null, [
+            'tls'      => true,
+            'localDev' => false,
+            'dev'      => false,
+        ]);
+    }
+
+    /**
+     * 连接到海外生产环境
+     */
+    public function connectToGlobal() {
+        return $this->connectTo(self::$GlobalServer['host'], self::$GlobalServer['port'], [
             'tls'      => true,
             'localDev' => false,
             'dev'      => false,

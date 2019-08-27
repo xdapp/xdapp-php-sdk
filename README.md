@@ -45,14 +45,17 @@ service.addFunction(function($arg) {
     return true;
 }, 'test_abc');
 
-// 连接到生产环境
-$service->connectToProduce();
+// 连接到生产环境（国内）
+//$service->connectToProduce();
+
+// 连接到生产环境（海外）
+//$service->connectToGlobal();
 
 // 或 连接到本地测试开发服务器
-$service->connectToLocalDev('127.0.0.1', 8082);
+//$service->connectToLocalDev('127.0.0.1', 8082);
 
 // 或 连接到外网测试服务器
-$service->connectToDev();
+//$service->connectToDev();
 ```
 
 更多的使用方法see: [https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器](https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器)
