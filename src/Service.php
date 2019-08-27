@@ -39,7 +39,7 @@ class Service extends \Hprose\Service {
     protected static $logger;
 
     protected static $ProductionServer = [
-        'host' => 'service-gcp.xdapp.com',
+        'host' => 'service-prod.xdapp.com',
         'port' => 8900,
     ];
 
