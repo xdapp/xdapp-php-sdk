@@ -22,7 +22,7 @@ use XDApp\ServiceReg\Service;
 // 其中 demo 为项目名，test 为服务名，123456 为密钥
 $service = Service::factory('demo', 'test', '123456');
 
-// 1. 注册一个方法
+// 1. 注册一个前端页面可访问的abc()方法
 $service->register(function($arg) {
     var_dump($arg);
     return true;
@@ -36,7 +36,7 @@ $service->addServiceByDir(realpath(__DIR__.'/service/'));
 // 单个方法推荐使用1，多个方法推荐2
 
 // 3. 使用 addFunction 注册方法
-// 请注意，只有服务名相同的前缀rpc方法才会被外部调用到
+// 请注意，只有服务名相同的前缀rpc方法才会被页面前端调用到
 service.addFunction(function($arg) {
     // 获取 context 对象
     $context = Service::getCurrentContext();
@@ -93,7 +93,7 @@ userdata    | 默认 stdClass 对象，可以自行设置参数
 
 ### `register($function, $alias = null, $option = [])`
 
-注册一个RPC方法到服务上，它是 `service.addFunction()` 方法的封装，差别在于会自动对 `alias` 增加 `serviceName` 前缀
+注册一个RPC方法到服务上，注册的方法页面端可以访问，它是 `service.addFunction()` 方法的封装，差别在于会自动对 `alias` 增加 `serviceName` 前缀
 
 `$service->register(hello, 'hello')` 相当于 `$service->addFunction(hello, 'servicename_hello')`
 
