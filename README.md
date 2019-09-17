@@ -4,7 +4,7 @@ XDAppRPC服务SDK
 
 ## 安装
 
-`composer.json` 的 repositories 加入 `https://packagist.xdapp.com/` 的包路径，require 加入 `xdapp/service-register`，
+`composer.json` 的 require 加入 `xdapp/service-register`，
 如下：
 
 ```json
@@ -19,7 +19,7 @@ XDAppRPC服务SDK
 
 ```php
 use XDApp\ServiceReg\Service;
-// 其中 demo 为项目名，test 为服务名，123456 为密钥
+// 其中 demo 为项目名(AppName)，test 为服务名(ServiceName)，123456 为密钥
 $service = Service::factory('demo', 'test', '123456');
 
 // 1. 注册一个前端页面可访问的abc()方法
@@ -89,7 +89,7 @@ userdata    | 默认 stdClass 对象，可以自行设置参数
 
 ### `connectToLocalDev($host = '127.0.0.1', $port = 8061, $serviceKey = null)`
 
-同上，连接到本地研发服务器，请下载 XDApp-Local-Dev 本地开发工具，https://git.xindong.com/core-system/xdapp-local-dev ，启动服务
+同上，连接到本地研发服务器，请下载 XDApp-Local-Dev 本地开发工具，https://github.com/xdapp/xdapp-local-dev ，启动服务
 
 ### `register($function, $alias = null, $option = [])`
 
