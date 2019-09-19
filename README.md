@@ -23,7 +23,7 @@ use XDApp\ServiceReg\Service;
 $service = Service::factory('demo', 'test', '123456');
 
 // 1. 注册一个前端页面可访问的abc()方法
-$service->register(function($arg) {
+$service->addWebFunction(function($arg) {
     var_dump($arg);
     return true;
 }, 'abc');
@@ -91,11 +91,11 @@ userdata    | 默认 stdClass 对象，可以自行设置参数
 
 同上，连接到本地研发服务器，请下载 XDApp-Local-Dev 本地开发工具，https://github.com/xdapp/xdapp-local-dev ，启动服务
 
-### `register($function, $alias = null, $option = [])`
+### `addWebFunction($function, $alias = null, $option = [])`
 
-注册一个RPC方法到服务上，注册的方法页面端可以访问，它是 `service.addFunction()` 方法的封装，差别在于会自动对 `alias` 增加 `serviceName` 前缀
+注册一个前端web页面可访问的RPC方法到服务上，它是 `service.addFunction()` 方法的封装，差别在于会自动对 `alias` 增加 `serviceName` 前缀
 
-`$service->register(hello, 'hello')` 相当于 `$service->addFunction(hello, 'servicename_hello')`
+`$service->addWebFunction(hello, 'hello')` 相当于 `$service->addFunction(hello, 'servicename_hello')`
 
 ### `addFunction($function, $alias = null, $option = [])`
 
@@ -105,6 +105,18 @@ userdata    | 默认 stdClass 对象，可以自行设置参数
 ### `addMissingFunction(function, $option = [])`
 
 此方法注册后，所有未知RPC请求都降调用它，它将传入2个参数，分别是RPC调用名称和参数
+
+### `setVersion($ver)` 
+
+设置服务器版本，在 Console 中的服务管理里可以看到，默认为 1.0
+
+### `setLogger(callable $logger)`
+ 
+设置一个log处理方法，方法接受3个参数，分别是：
+
+* `$type` - 类型，包括：log, info, debug, warn
+* `$msg`  - Log内容，字符串或Exception对象
+* `$data` - 数组数据，可能是 null
 
 ### `addFilter() / removeFilter()` 过滤器
 

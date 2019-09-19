@@ -13,9 +13,9 @@ include $dir .'autoload.php';
 
 $service = Service::factory('demo', 'test', '123456');
 
-$service->register(function(){
-
-}, 'aaa');
+$service->addWebFunction(function($name = ''){
+    return "hi: $name";
+}, 'hello');
 
 echo "All functions: ", implode(', ', $service->getNames()), "\n";
 

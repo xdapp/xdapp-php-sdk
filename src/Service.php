@@ -80,7 +80,24 @@ class Service extends \Hprose\Service {
         return $service;
     }
 
-    public function register($func, $alias = '', array $options = []) {
+    /**
+     * 添加一个可以给Web访问的RPC方法
+     * 例如:
+     *
+     * ```php
+     * $this->addWebFunction(function($hi) {
+     *     return $hi . ' at ' . time();
+     * }, 'test')
+     * ```
+     *
+     * 则可以在网页的vue中使用 `this.$service.myServiceName.test('hello')` （其中 myServiceName 为你注册的服务名）
+     *
+     * @param $func
+     * @param string $alias
+     * @param array $options
+     * @return Service
+     */
+    public function addWebFunction($func, $alias = '', array $options = []) {
         if (is_array($alias) && empty($options)) {
             $options = $alias;
             $alias = '';
@@ -98,6 +115,18 @@ class Service extends \Hprose\Service {
         $alias = $this->serviceName . '_' . $alias;
 
         return $this->addFunction($func, $alias, $options);
+    }
+
+    /**
+     * addWebFunction的别称
+     *
+     * @param $func
+     * @param string $alias
+     * @param array $options
+     * @return Service
+     */
+    public function register($func, $alias = '', array $options = []) {
+        return $this->addWebFunction($func, $alias, $options);
     }
 
     /**
@@ -261,7 +290,7 @@ class Service extends \Hprose\Service {
      * @param $host
      * @param $port
      * @param array $option
-     * @return bool|\Swoole\Client
+     * @return false|\Swoole\Coroutine\Client
      */
     public function connectTo($host, $port, $option = []) {
         if ($this->client) {
@@ -283,125 +312,166 @@ class Service extends \Hprose\Service {
         if ($option['tls']) {
             $type |= SWOOLE_SSL;
         }
-        $client = new \Swoole\Client($type, SWOOLE_SOCK_ASYNC);
+
+        $client = new \Swoole\Coroutine\Client($type);
         $client->set($this->getServiceClientConfig($option['tls'] ? $host : null));
-        $client->on("connect", function($cli) {
-            $this->log('Rpc client connected.');
-        });
 
-        $client->on("receive", function($cli, $data) {
-            # 标识   | 版本    | 长度    | 头信息       | 自定义内容    |  正文
-            # ------|--------|---------|------------|-------------|-------------
-            # Flag  | Ver    | Length  | Header     | Context      | Body
-            # 1     | 1      | 4       | 17         | 默认0，不定   | 不定
-            # C     | C      | N       |            |             |
-            #
-            #
-            # 其中 Header 部分包括
-            #
-            # AppId     | 服务ID      | rpc请求序号  | 管理员ID      | 自定义信息长度
-            # ----------|------------|------------|-------------|-----------------
-            # AppId     | ServiceId  | RequestId  | AdminId     | ContextLength
-            # 4         | 4          | 4          | 4           | 1
-            # N         | N          | N          | N           | C
-
-            $dataArr = unpack('CFlag/CVer', substr($data, 0, 2));
-            $flag    = $dataArr['Flag'];
-            $ver     = $dataArr['Ver'];
-            if ($ver === 1) {
-                if (self::FLAG_RESULT_MODE === ($flag & self::FLAG_RESULT_MODE)) {
-                    # 返回数据的模式
-                    // todo 双向功能请求支持
-                    //if (!$this->regSuccess) {
-                    //    # 在还没注册成功之前对服务器的返回数据不可信任
-                    //    return;
-                    //}
-                    //
-                    //$finish      = ($flag & self::FLAG_FINISH) === self::FLAG_FINISH ? true : false;
-                    //$workerId    = current(unpack('n', substr($data, self::CONTEXT_OFFSET, 2)));
-                    //$msg         = new RpcMessage();
-                    //$msg->id     = current(unpack('N', substr($data, self::PREFIX_LENGTH + 8, 4)));
-                    //$msg->tag    = substr($data, self::CONTEXT_OFFSET + 2, 1);
-                    //$msg->data   = substr($data, self::CONTEXT_OFFSET + 3);
-                    //$msg->finish = $finish;
-                    //$msg->send($workerId);
-
-                    return;
-                }
-
-                $dataArr          = unpack('CFlag/CVer/NLength/NAppId/NServiceId/NRequestId/NAdminId/CContextLength', substr($data, 0, self::CONTEXT_OFFSET));
-                $headerAndContext = substr($data, self::PREFIX_LENGTH, self::HEADER_LENGTH + $dataArr['ContextLength']);
-                $rpcData          = substr($data, self::CONTEXT_OFFSET + $dataArr['ContextLength']);
-
-                if (!$this->regSuccess) {
-                    # 在还没注册成功之前，只允许 sys_reg，sys_regErr，sys_regOk 方法执行
-                    try {
-                        $fun = self::parseRequest($rpcData);
-                        if (count($fun) > 1) {
-                            # 还没有注册完成前不允许并行调用
-                            return;
-                        }
-                        list($funName) = $fun[0];
-                        if (!in_array($funName, ['sys_reg', 'sys_regErr', 'sys_regOk'])) {
-                            $this->warn('在还没有注册完成时非法调用了Rpc方法:' . $funName . '(), 请求数据: ' . $rpcData);
-
-                            return;
-                        }
+        \Swoole\Coroutine::create(function() use ($client, $host, $port, $option) {
+            connect:
+            while (true) {
+                if (!$client->connect($host, $port, 1)) {
+                    if ($this->setClosed()) {
+                        // 重新连接
+                        // 4.2.0版本增加了对sleep 函数的Hook, 不会阻塞进程 see https://wiki.swoole.com/wiki/page/992.html
+                        $this->log('RPC 连接失败, 1秒后自动重连.');
+                        sleep(1);
                     }
-                    catch (\Exception $e) {
-                        $this->warn('解析rpc数据失败, ' . $rpcData);
+                    else {
+                        $this->log('RPC 连接断开, 请重启服务.');
                         return;
                     }
                 }
+                else {
+                    break;
+                }
+            }
 
-                $context                   = new Context();
-                $context->userdata         = new \stdClass();
-                $context->headerAndContext = $headerAndContext;
-                $context->receiveParam     = $dataArr;
-                $context->id               = $dataArr['RequestId'];
-                $context->adminId          = $dataArr['AdminId'];
-                $context->appId            = $dataArr['AppId'];
-                $context->serviceId        = $dataArr['ServiceId'];
-                $context->service          = $this;
+            while (true) {
+                $rs = $client->recv(-1);
+                if ($rs === false || $rs === '') {
+                    // 连接断开
+                    if ($this->setClosed()) {
+                        // 重新连接
+                        $this->log('RPC 连接断开, 1秒后自动重连.');
+                        sleep(1);
+                        goto connect;
+                    }
+                    else {
+                        $this->log('RPC 连接断开, 请重启服务.');
+                    }
+                    break;
+                }
+                else {
+                    $this->onReceive($client, $rs);
+                }
+            }
+        });
+        return $client;
+    }
 
-                $this->userFatalErrorHandler = function($error) use ($cli, $context) {
-                    $this->socketSend($cli, $this->endError($error, $context), $context);
-                };
+    /**
+     * 当关闭时
+     *
+     * @return bool true: 可以尝试重新连接，不需要再尝试重新连接
+     */
+    protected function setClosed() {
+        $this->client = null;
+        $this->regSuccess = false;
 
+        if (!$this->isRegError) {
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    protected function onReceive($cli, $data) {
+        # 标识   | 版本    | 长度    | 头信息       | 自定义内容    |  正文
+        # ------|--------|---------|------------|-------------|-------------
+        # Flag  | Ver    | Length  | Header     | Context      | Body
+        # 1     | 1      | 4       | 17         | 默认0，不定   | 不定
+        # C     | C      | N       |            |             |
+        #
+        #
+        # 其中 Header 部分包括
+        #
+        # AppId     | 服务ID      | rpc请求序号  | 管理员ID      | 自定义信息长度
+        # ----------|------------|------------|-------------|-----------------
+        # AppId     | ServiceId  | RequestId  | AdminId     | ContextLength
+        # 4         | 4          | 4          | 4           | 1
+        # N         | N          | N          | N           | C
+
+        $dataArr = unpack('CFlag/CVer', substr($data, 0, 2));
+        $flag    = $dataArr['Flag'];
+        $ver     = $dataArr['Ver'];
+        if ($ver === 1) {
+            if (self::FLAG_RESULT_MODE === ($flag & self::FLAG_RESULT_MODE)) {
+                # 返回数据的模式
+                // todo 双向功能请求支持
+                //if (!$this->regSuccess) {
+                //    # 在还没注册成功之前对服务器的返回数据不可信任
+                //    return;
+                //}
+                //
+                //$finish      = ($flag & self::FLAG_FINISH) === self::FLAG_FINISH ? true : false;
+                //$workerId    = current(unpack('n', substr($data, self::CONTEXT_OFFSET, 2)));
+                //$msg         = new RpcMessage();
+                //$msg->id     = current(unpack('N', substr($data, self::PREFIX_LENGTH + 8, 4)));
+                //$msg->tag    = substr($data, self::CONTEXT_OFFSET + 2, 1);
+                //$msg->data   = substr($data, self::CONTEXT_OFFSET + 3);
+                //$msg->finish = $finish;
+                //$msg->send($workerId);
+
+                return;
+            }
+
+            $dataArr          = unpack('CFlag/CVer/NLength/NAppId/NServiceId/NRequestId/NAdminId/CContextLength', substr($data, 0, self::CONTEXT_OFFSET));
+            $headerAndContext = substr($data, self::PREFIX_LENGTH, self::HEADER_LENGTH + $dataArr['ContextLength']);
+            $rpcData          = substr($data, self::CONTEXT_OFFSET + $dataArr['ContextLength']);
+
+            if (!$this->regSuccess) {
+                # 在还没注册成功之前，只允许 sys_reg，sys_regErr，sys_regOk 方法执行
+                try {
+                    $fun = self::parseRequest($rpcData);
+                    if (count($fun) > 1) {
+                        # 还没有注册完成前不允许并行调用
+                        return;
+                    }
+                    list($funName) = $fun[0];
+                    if (!in_array($funName, ['sys_reg', 'sys_regErr', 'sys_regOk'])) {
+                        $this->warn('在还没有注册完成时非法调用了Rpc方法:' . $funName . '(), 请求数据: ' . $rpcData);
+
+                        return;
+                    }
+                }
+                catch (\Exception $e) {
+                    $this->warn('解析rpc数据失败, ' . $rpcData);
+                    return;
+                }
+            }
+
+            $context                   = new Context();
+            $context->userdata         = new \stdClass();
+            $context->headerAndContext = $headerAndContext;
+            $context->receiveParam     = $dataArr;
+            $context->id               = $dataArr['RequestId'];
+            $context->adminId          = $dataArr['AdminId'];
+            $context->appId            = $dataArr['AppId'];
+            $context->serviceId        = $dataArr['ServiceId'];
+            $context->service          = $this;
+
+            //$this->userFatalErrorHandler = function($error) use ($cli, $context) {
+            //    $this->socketSend($cli, $this->endError($error, $context), $context);
+            //};
+
+            try {
                 $this->defaultHandle($rpcData, $context)->then(function($data) use ($cli, $context) {
                     $this->socketSend($cli, $data, $context);
                 });
             }
-            else {
-                $this->warn('消息版本错误, ' . $ver);
+            catch (\Exception $e){
+                $this->warn($e->getMessage());
+                $this->socketSend($cli, $this->endError($e->getMessage(), $context), $context);
             }
-        });
-
-        $client->on("error", function($cli) use ($port, $host, $option) {
-            $this->client     = null;
-            $this->regSuccess = false;
-
-            $this->log('RPC 连接失败' . ($this->isRegError ? ', 请重启服务' : ', 1秒后自动重连.'));
-            if (!$this->isRegError) {
-                \Swoole\Timer::after(1000, function() use ($port, $host, $option) {
-                    $this->connectTo($port, $host, $option);
-                });
+            catch (\Throwable $t){
+                $this->warn($t->getMessage());
+                $this->socketSend($cli, $this->endError($t->getMessage(), $context), $context);
             }
-        });
-        $client->on("close", function($cli) use ($port, $host, $option) {
-            $this->client = null;
-            $this->regSuccess = false;
-
-            $this->log('RPC 连接已断开' . ($this->isRegError ? ', 请重启服务' : ', 1秒后自动重连.'));
-            if (!$this->isRegError) {
-                \Swoole\Timer::after(1000, function() use ($port, $host, $option) {
-                    $this->connectTo($port, $host, $option);
-                });
-            }
-        });
-        $client->connect($host, $port, 1);
-
-        return $client;
+        }
+        else {
+            $this->warn('消息版本错误, ' . $ver);
+        }
     }
 
     /**
