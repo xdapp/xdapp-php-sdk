@@ -10,7 +10,7 @@ XDAppRPC服务SDK
 ```json
 {
   "require": {
-    "xdapp/service-register": "~1.0"
+    "xdapp/service-register": "^1.1"
   }
 }
 ```
