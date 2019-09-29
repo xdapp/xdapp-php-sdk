@@ -188,6 +188,9 @@ class Service extends \Hprose\Service {
         if (true === $autoAddServiceNamePrefix) {
             $prefixDefault = $this->serviceName .'_';
         }
+        else if (is_string($autoAddServiceNamePrefix)) {
+            $prefixDefault = rtrim($autoAddServiceNamePrefix, '_') .'_';
+        }
         else {
             $prefixDefault = '';
         }
@@ -310,6 +313,10 @@ class Service extends \Hprose\Service {
 
         $type = SWOOLE_SOCK_TCP;
         if ($option['tls']) {
+            if (!defined('SWOOLE_SSL')) {
+                $this->log('你的Swoole扩展不支持SSL，请重新安装开启OpenSSL支持');
+                exit;
+            }
             $type |= SWOOLE_SSL;
         }
 
@@ -323,15 +330,16 @@ class Service extends \Hprose\Service {
                     if ($this->setClosed()) {
                         // 重新连接
                         // 4.2.0版本增加了对sleep 函数的Hook, 不会阻塞进程 see https://wiki.swoole.com/wiki/page/992.html
-                        $this->log('RPC 连接失败, 1秒后自动重连.');
+                        $this->log('RPC 连接失败, 1秒后自动重连. errCode: ' . $client->errCode);
                         sleep(1);
                     }
                     else {
-                        $this->log('RPC 连接断开, 请重启服务.');
+                        $this->log('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
                         return;
                     }
                 }
                 else {
+                    $this->log("连接服务器成功 {$host}:{$port}");
                     break;
                 }
             }
@@ -342,12 +350,12 @@ class Service extends \Hprose\Service {
                     // 连接断开
                     if ($this->setClosed()) {
                         // 重新连接
-                        $this->log('RPC 连接断开, 1秒后自动重连.');
+                        $this->log('RPC 连接断开, 1秒后自动重连. errCode: ' . $client->errCode);
                         sleep(1);
                         goto connect;
                     }
                     else {
-                        $this->log('RPC 连接断开, 请重启服务.');
+                        $this->log('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
                     }
                     break;
                 }

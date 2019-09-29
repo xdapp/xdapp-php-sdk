@@ -20,6 +20,8 @@ XDAppRPC服务SDK
 PHP >= 7.0（推荐7.2）
 Swoole 扩展 >=4.0，推荐最新版本
 
+> 线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
+
 ## 使用方法
 
 ```php
