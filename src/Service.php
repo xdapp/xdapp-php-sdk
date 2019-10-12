@@ -331,6 +331,7 @@ class Service extends \Hprose\Service {
                         // 重新连接
                         // 4.2.0版本增加了对sleep 函数的Hook, 不会阻塞进程 see https://wiki.swoole.com/wiki/page/992.html
                         $this->log('RPC 连接失败, 1秒后自动重连. errCode: ' . $client->errCode);
+                        $client->close();
                         sleep(1);
                     }
                     else {
@@ -351,6 +352,7 @@ class Service extends \Hprose\Service {
                     if ($this->setClosed()) {
                         // 重新连接
                         $this->log('RPC 连接断开, 1秒后自动重连. errCode: ' . $client->errCode);
+                        $client->close();
                         sleep(1);
                         goto connect;
                     }
