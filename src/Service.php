@@ -48,8 +48,13 @@ class Service extends \Hprose\Service {
         'port' => 8100,
     ];
 
-    protected static $GlobalServer = [
-        'host' => 'service-gcp.xdapp.com',
+    protected static $AsiaServer = [
+        'host' => 'service-asia.xdapp.com',
+        'port' => 8900,
+    ];
+
+    protected static $EuropeServer = [
+        'host' => 'service-eu.xdapp.com',
         'port' => 8900,
     ];
 
@@ -164,10 +169,30 @@ class Service extends \Hprose\Service {
     }
 
     /**
-     * 连接到海外生产环境
+     * 连接到东南亚生产环境
+     */
+    public function connectToProduceAsia() {
+        return $this->connectTo(self::$AsiaServer['host'], self::$AsiaServer['port'], [
+            'tls'      => true,
+            'localDev' => false,
+            'dev'      => false,
+        ]);
+    }
+
+    /**
+     * 请使用 connectToAsia()
+     *
+     * @deprecated
      */
     public function connectToGlobal() {
-        return $this->connectTo(self::$GlobalServer['host'], self::$GlobalServer['port'], [
+        return $this->connectToProduceAsia();
+    }
+
+    /**
+     * 连接到欧洲生产环境
+     */
+    public function connectToProduceEurope() {
+        return $this->connectTo(self::$EuropeServer['host'], self::$EuropeServer['port'], [
             'tls'      => true,
             'localDev' => false,
             'dev'      => false,

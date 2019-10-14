@@ -55,8 +55,11 @@ service.addFunction(function($arg) {
 // 连接到生产环境（国内）
 //$service->connectToProduce();
 
-// 连接到生产环境（海外）
-//$service->connectToGlobal();
+// 连接到生产环境（海外东南亚）
+//$service->connectToProduceAsia();
+
+// 连接到欧洲生产环境
+//$service->connectToProduceEurope();
 
 // 或 连接到本地测试开发服务器
 //$service->connectToLocalDev('127.0.0.1', 8082);
@@ -67,6 +70,16 @@ service.addFunction(function($arg) {
 
 更多的使用方法see: [https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器](https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器)
 
+
+### 服务环境
+
+区域           | 环境      |  使用方法
+--------------|----------|---------
+国服           | 生产环境  | connectToProduce()
+东南亚正式服     | 生产环境  | connectToProduceAsia()
+欧洲正式服       | 生产环境  | connectToProduceEurope()
+DEV测试环境     | 测试环境  | connectToDev()
+本地测试环境     | 测试环境  | connectToLocalDev()
 
 ### 关于 `context` 上下文对象
 
