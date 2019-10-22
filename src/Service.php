@@ -2,6 +2,8 @@
 
 namespace XDApp\ServiceReg;
 
+use Swoole\Coroutine\Http\Client;
+
 class Service extends \Hprose\Service {
     /**
      * @var \Swoole\Client
@@ -9,6 +11,7 @@ class Service extends \Hprose\Service {
     public $client;
 
     public $appName;
+
     public $serviceName;
 
     public $version = '1.0';
@@ -21,11 +24,15 @@ class Service extends \Hprose\Service {
     public $serviceData = [];
 
     protected $regSuccess = false;
+
     protected $isRegError;
+
     protected $key;
 
     protected $host;
+
     protected $port;
+
     protected $option = [];
 
     /**
@@ -58,14 +65,13 @@ class Service extends \Hprose\Service {
         'port' => 8900,
     ];
 
-    const FLAG_SYS_MSG     = 1;     # 来自系统调用的消息请求
-    const FLAG_RESULT_MODE = 2;     # 请求返回模式，表明这是一个RPC结果返回
-    const FLAG_FINISH      = 4;     # 是否消息完成，用在消息返回模式里，表明RPC返回内容结束
-    const FLAG_TRANSPORT   = 8;     # 转发浏览器RPC请求，表明这是一个来自浏览器的请求
-
-    const PREFIX_LENGTH  = 6;       # Flag 1字节、 Ver 1字节、 Length 4字节、HeaderLength 1字节
-    const HEADER_LENGTH  = 17;      # 默认消息头长度, 不包括 PREFIX_LENGTH
-    const CONTEXT_OFFSET = self::PREFIX_LENGTH + self::HEADER_LENGTH;    # 自定义上下文内容所在位置，23
+    const FLAG_SYS_MSG     = 1;                                            # 来自系统调用的消息请求
+    const FLAG_RESULT_MODE = 2;                                            # 请求返回模式，表明这是一个RPC结果返回
+    const FLAG_FINISH      = 4;                                            # 是否消息完成，用在消息返回模式里，表明RPC返回内容结束
+    const FLAG_TRANSPORT   = 8;                                            # 转发浏览器RPC请求，表明这是一个来自浏览器的请求
+    const PREFIX_LENGTH    = 6;                                            # Flag 1字节、 Ver 1字节、 Length 4字节、HeaderLength 1字节
+    const HEADER_LENGTH    = 17;                                           # 默认消息头长度, 不包括 PREFIX_LENGTH
+    const CONTEXT_OFFSET   = self::PREFIX_LENGTH + self::HEADER_LENGTH;    # 自定义上下文内容所在位置，23
 
     /**
      * 创建实例化对象
@@ -80,9 +86,104 @@ class Service extends \Hprose\Service {
         $service->appName     = $appName;
         $service->serviceName = $serviceName;
         $service->key         = $key;
-        $service->addServiceByDir(realpath(__DIR__.'/../service'), false);
+        $service->addServiceByDir(realpath(__DIR__ . '/../service'), false);
 
         return $service;
+    }
+
+    /**
+     * 添加一个http代理
+     *
+     * 使用场景：
+     * 当服务器里提供一个内部Http接口，但是它没有暴露给外网，也没有权限验证处理
+     * 此时可以使用此方法，将它暴露成为一个XDApp的RPC服务，在网页里直接通过RPC请求将数据转发到SDK请求后返回，不仅可以实现内网穿透功能还可以在Console后台设置访问权限。
+     *
+     * 每个Http请求都会带以下头信息:
+     *
+     * * X-Xdapp-Proxy: True
+     * * X-Xdapp-App-Id: 1
+     * * X-Xdapp-Service: demo
+     * * X-Xdapp-Request-Id: 1
+     * * X-Xdapp-Admin-Id: 1
+     *
+     * ```php
+     * $this->addHttpApiProxy('http://127.0.0.1:9999', 'myApi', ['get', 'post', 'delete', 'put'])
+     * ```
+     *
+     * Vue页面使用
+     *
+     * 方法接受3个参数，$uri, $data, $timeout，其中 $data 只有在 post 和 put 有效，$timeout 默认 30 秒
+     *
+     * ```javascript
+     * // 其中gm为注册的服务名
+     * this.$service.gm.myApi.get('/uri?a=arg1&b=arg2');
+     * // 最终将会请求 http://127.0.0.1:9999/uri?a=arg1&b=arg2
+     * // 返回对象 {code: 200, headers: {...}, body: '...'}
+     *
+     * // 使用post, 第2个参数接受string或字符串, 第3个参数可设置超时
+     * this.$service.gm.myApi.post('/uri?a=1', {a:'arg1', b:'arg2'}, 15);
+     * ```
+     *
+     * @param string $url API根路径
+     * @param string $alias 别名
+     * @param array|string $methods 支持的模式，默认 get，可以是 delete, put 等
+     * @param array $httpHeaders 默认会添加的Http头
+     */
+    public function addHttpApiProxy($url, $alias = 'api', $methods = ['get'], array $httpHeaders = []) {
+        foreach ((array)$methods as $method) {
+            $method = strtoupper($method);
+            $this->addFunction(function($uri = '', $data = null, $timeout = 30) use ($url, $method, $httpHeaders) {
+                $context = self::getCurrentContext();
+                $apiMeta = parse_url($url . $uri);
+
+                # 协程客户端
+                $client = new Client($apiMeta['host'], $apiMeta['port'], $apiMeta['scheme'] === 'https');
+                $client->setHeaders(array_merge([
+                    'Host'               => $apiMeta['host'],
+                    'User-Agent'         => 'Chrome/49.0.2587.3',
+                    'X-Xdapp-Proxy'      => 'True',
+                    'X-Xdapp-App-Id'     => $context->appId,
+                    'X-Xdapp-Service'    => $context->service,
+                    'X-Xdapp-Request-Id' => $context->requestId,
+                    'X-Xdapp-Admin-Id'   => $context->adminId,
+                ], $httpHeaders));
+                $client->set([
+                    'timeout' => $timeout,
+                ]);
+
+                switch ($method) {
+                    case 'GET':
+                        $client->get($apiMeta['path']);
+                        break;
+
+                    case 'POST':
+                        $client->post($apiMeta['path'], $data);
+                        break;
+
+                    case 'DELETE':
+                        $client->setMethod($method);
+                        $client->execute($apiMeta['path']);
+                        break;
+
+                    case 'PUT':
+                        $client->setMethod($method);
+                        $client->setData($data);
+                        $client->execute($apiMeta['path']);
+                        break;
+                }
+
+                $rs = [
+                    'code'    => $client->getStatusCode(),      # int
+                    'headers' => $client->getHeaders(),         # array
+                    'body'    => $client->getBody(),            # string
+                ];
+                $client->close();
+
+                $this->debug(sprintf("[Curl] Http Proxy, method: %s, code: %s, url: %s, headers: %s, data: %s, body: %s", $method, $rs['code'], $url, json_encode($rs['headers']), substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 1000), substr($rs['body'], 0, 1000)));
+
+                return $rs;
+            }, "{$this->serviceName}_{$alias}_{$method}");
+        }
     }
 
     /**
@@ -105,7 +206,7 @@ class Service extends \Hprose\Service {
     public function addWebFunction($func, $alias = '', array $options = []) {
         if (is_array($alias) && empty($options)) {
             $options = $alias;
-            $alias = '';
+            $alias   = '';
         }
         if (empty($alias)) {
             if (is_string($func)) {
@@ -129,6 +230,7 @@ class Service extends \Hprose\Service {
      * @param string $alias
      * @param array $options
      * @return Service
+     * @deprecated
      */
     public function register($func, $alias = '', array $options = []) {
         return $this->addWebFunction($func, $alias, $options);
@@ -211,10 +313,10 @@ class Service extends \Hprose\Service {
         $this->loadServiceFileByPath($list, rtrim($dir, '/\\'));
 
         if (true === $autoAddServiceNamePrefix) {
-            $prefixDefault = $this->serviceName .'_';
+            $prefixDefault = $this->serviceName . '_';
         }
         else if (is_string($autoAddServiceNamePrefix)) {
-            $prefixDefault = rtrim($autoAddServiceNamePrefix, '_') .'_';
+            $prefixDefault = rtrim($autoAddServiceNamePrefix, '_') . '_';
         }
         else {
             $prefixDefault = '';
@@ -287,28 +389,25 @@ class Service extends \Hprose\Service {
         return $success;
     }
 
-    protected function loadServiceFileByPath(& $list, $path, $prefix = '')
-    {
-        foreach (glob($path .'/*') as $file)
-        {
+    protected function loadServiceFileByPath(& $list, $path, $prefix = '') {
+        foreach (glob($path . '/*') as $file) {
             $name = strtolower(basename($file));
-            if (substr($name, -4) !== '.php')continue;
+            if (substr($name, -4) !== '.php') {
+                continue;
+            }
 
             $name = substr($name, 0, -4);
 
-            if (is_dir($file))
-            {
+            if (is_dir($file)) {
                 $this->loadServiceFileByPath($file, $list, "{$name}_");
             }
-            else
-            {
-                $list[$prefix.$name] = $file;
+            else {
+                $list[$prefix . $name] = $file;
             }
         }
     }
 
-    protected function loadFromFile($__file__)
-    {
+    protected function loadFromFile($__file__) {
         return include($__file__);
     }
 
@@ -400,7 +499,7 @@ class Service extends \Hprose\Service {
      * @return bool true: 可以尝试重新连接，不需要再尝试重新连接
      */
     protected function setClosed() {
-        $this->client = null;
+        $this->client     = null;
         $this->regSuccess = false;
 
         if (!$this->isRegError) {
@@ -495,11 +594,11 @@ class Service extends \Hprose\Service {
                     $this->socketSend($cli, $data, $context);
                 });
             }
-            catch (\Exception $e){
+            catch (\Exception $e) {
                 $this->warn($e->getMessage());
                 $this->socketSend($cli, $this->endError($e->getMessage(), $context), $context);
             }
-            catch (\Throwable $t){
+            catch (\Throwable $t) {
                 $this->warn($t->getMessage());
                 $this->socketSend($cli, $this->endError($t->getMessage(), $context), $context);
             }
@@ -578,7 +677,9 @@ class Service extends \Hprose\Service {
             'other'   => [],
         ];
         foreach ($this->getNames() as $item) {
-            if ($item === '#')continue;
+            if ($item === '#') {
+                continue;
+            }
             $pos = strpos($item, '_');
             if (false === $pos) {
                 $allService['other'][] = $item;
@@ -598,10 +699,10 @@ class Service extends \Hprose\Service {
                     break;
             }
         }
-        $this->info('系统RPC: '. implode(', ', $allService['sys']));
-        $this->info('已暴露服务RPC: '. implode(', ', $allService['service']));
+        $this->info('系统RPC: ' . implode(', ', $allService['sys']));
+        $this->info('已暴露服务RPC: ' . implode(', ', $allService['service']));
         if (count($allService['other']) > 0) {
-            $this->info('已暴露但XDApp不会调用的RPC：'. implode(', ', $allService['other']));
+            $this->info('已暴露但XDApp不会调用的RPC：' . implode(', ', $allService['other']));
             $this->info("若需要这些方法暴露给XDApp服务使用，请加: {$this->serviceName} 前缀");
         }
     }
@@ -630,7 +731,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '')  . "\n";
+        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function info($msg, $data = null) {
@@ -642,7 +743,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '')  . "\n";
+        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function warn($msg, $data = null) {
