@@ -43,7 +43,7 @@ class Context extends \stdClass {
      *
      * @var int
      */
-    public $id;
+    public $requestId;
 
     /**
      * 请求的AdminId，同 `$this->receiveParam['AdminId']`

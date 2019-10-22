@@ -143,7 +143,7 @@ class Service extends \Hprose\Service {
                     'User-Agent'         => 'Chrome/49.0.2587.3',
                     'X-Xdapp-Proxy'      => 'True',
                     'X-Xdapp-App-Id'     => $context->appId,
-                    'X-Xdapp-Service'    => $context->service,
+                    'X-Xdapp-Service'    => $context->service->serviceName,
                     'X-Xdapp-Request-Id' => $context->requestId,
                     'X-Xdapp-Admin-Id'   => $context->adminId,
                 ], $httpHeaders));
@@ -179,10 +179,10 @@ class Service extends \Hprose\Service {
                 ];
                 $client->close();
 
-                $this->debug(sprintf("[Curl] Http Proxy, method: %s, code: %s, url: %s, headers: %s, data: %s, body: %s", $method, $rs['code'], $url, json_encode($rs['headers']), substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 1000), substr($rs['body'], 0, 1000)));
+                $this->debug(sprintf("[Curl] Http Proxy, method: %s, code: %s, url: %s, headers: %s, data: %s, body: %s", $method, $rs['code'], $url.$uri, json_encode($rs['headers']), substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 1000), substr($rs['body'], 0, 1000)));
 
                 return $rs;
-            }, "{$this->serviceName}_{$alias}_{$method}");
+            }, "{$this->serviceName}_{$alias}_". strtolower($method));
         }
     }
 
@@ -579,7 +579,7 @@ class Service extends \Hprose\Service {
             $context->userdata         = new \stdClass();
             $context->headerAndContext = $headerAndContext;
             $context->receiveParam     = $dataArr;
-            $context->id               = $dataArr['RequestId'];
+            $context->requestId        = $dataArr['RequestId'];
             $context->adminId          = $dataArr['AdminId'];
             $context->appId            = $dataArr['AppId'];
             $context->serviceId        = $dataArr['ServiceId'];
