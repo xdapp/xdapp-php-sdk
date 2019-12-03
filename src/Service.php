@@ -700,10 +700,10 @@ class Service extends \Hprose\Service {
             }
         }
         $this->info('系统RPC: ' . implode(', ', $allService['sys']));
-        $this->info('已暴露服务RPC: ' . implode(', ', $allService['service']));
+        $this->info('已暴露Web RPC: ' . implode(', ', $allService['service']));
         if (count($allService['other']) > 0) {
-            $this->info('已暴露但XDApp不会调用的RPC：' . implode(', ', $allService['other']));
-            $this->info("若需要这些方法暴露给XDApp服务使用，请加: {$this->serviceName} 前缀");
+            $this->info('已暴露但Web不会调用的RPC：' . implode(', ', $allService['other']));
+            $this->info("若需要暴露给Web使用，请加: {$this->serviceName} 前缀");
         }
     }
 
