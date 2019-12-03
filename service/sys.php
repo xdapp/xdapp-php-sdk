@@ -8,9 +8,10 @@ return new class {
      * @param int $time
      * @param string $rand
      * @param string $hash
+     * @param bool $extend
      * @return array
      */
-    public function reg($time, $rand, $hash) {
+    public function reg($time, $rand, $hash, $extend = false) {
         $context = Service::getCurrentContext();
         if (!$context) {
             return [
@@ -42,7 +43,7 @@ return new class {
         }
         $time = time();
 
-        return [
+        $rs = [
             'status'  => true,
             'app'     => $service->appName,
             'name'    => $service->serviceName,
@@ -51,6 +52,24 @@ return new class {
             'version' => $service->getVersion(),
             'hash'    => $service->getRegHash($time, $rand),
         ];
+
+        if ($extend) {
+            $cli = new \Swoole\Coroutine\Http\Client('www.xdapp.com', 443, true);
+            $cli->setHeaders([
+                'Host'       => "www.xdapp.com",
+                "User-Agent" => 'Chrome/49.0.2587.3',
+                'Accept'     => 'text/html,application/xhtml+xml,application/xml',
+            ]);
+            $cli->set(['timeout' => 3]);
+            $cli->get("/api/myip?appId={$service->appName}&time=$time&sign=". md5("{$service->appName}{$time}.xdapp.com"));
+            //$cli->get("/api/myip?app={$service->appName}&time=$time&sign=". md5("{$time}.{$service->appName}.xdapp.com"));
+            $code = $cli->statusCode;
+            $ip = $cli->body;
+            $cli->close();
+
+            $rs['ip'] = $ip;
+        }
+        return $rs;
     }
 
     /**
