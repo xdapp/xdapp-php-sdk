@@ -19,6 +19,8 @@ XDAppRPC服务SDK
 
 * PHP >= 7.0（推荐7.2）
 * PHP Swoole 扩展 >=4.0，推荐最新版本
+* PHP hprose 扩展
+* PHP mbstring 扩展 (通常默认安装)
 * PHP snappy 扩展，安装 see https://github.com/kjdev/php-ext-snappy
 
 > 线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
@@ -67,6 +69,12 @@ service.addFunction(function($arg) {
 
 // 或 连接到外网测试服务器
 //$service->connectToDev();
+
+// RPC调用远端方法
+$list = $service->xdAppService()->my->getMenu();
+// 等同如下：
+// $list = $service->service()->xdapp->my->getMenu();
+print_r($list);
 ```
 
 更多的使用方法see: [https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器](https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器)
