@@ -16,6 +16,8 @@
     "php": "^7.0.0",
     "ext-swoole": ">= 4.0",
     "ext-snappy": "*",
+    "ext-hprose": "*",
+    "ext-mbstring": "*",
     "hprose/hprose": "~2.0"
   }
 }
