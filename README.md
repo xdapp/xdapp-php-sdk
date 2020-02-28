@@ -2,19 +2,6 @@
 
 XDAppRPC服务SDK
 
-## 安装
-
-`composer.json` 的 require 加入 `xdapp/service-register`，
-如下：
-
-```json
-{
-  "require": {
-    "xdapp/service-register": "^1.1"
-  }
-}
-```
-
 ## 依赖
 
 * PHP >= 7.0（推荐7.2）
@@ -23,11 +10,63 @@ XDAppRPC服务SDK
 * PHP mbstring 扩展 (通常默认安装)
 * PHP snappy 扩展，安装 see https://github.com/kjdev/php-ext-snappy
 
-> 线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
+## 安装
+
+! 首先需要安装composer，安装方式（see https://getcomposer.org/download/）
+
+### 在已有PHP项目中加入依赖包
+```
+composer require xdapp/service-register
+```
+
+### 在新项目中使用（HelloWorld，适合新手）
+
+1.新建文件夹，创建 `composer.json` 文件，内容：
+
+```json
+{
+  "minimum-stability": "stable",
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  },
+  "require": {
+    "xdapp/service-register": "^1.1"
+  }
+}
+```
+
+2.运行 `composer install`，稍等片刻即可安装好（若网络慢，可使用中国镜像，see https://pkg.phpcomposer.com/）
+
+3.创建一个文件夹，比如叫 `service`，然后创建一个 `test.php` 文件，内容：
+```php
+<?php
+return new class() {
+   function hello() {
+      return "hello world";
+   }
+};
+```
+
+4.创建 `run.php` 文件：
+```php
+<?php
+use XDApp\ServiceReg\Service;
+$service = Service::factory('demo', 'test', '123456');      // app、service、token
+$service->addServiceByDir(__DIR__.'/service/');             // 注册 service 目录下所有匿名类
+$service->connectToDev();  // 连到线上测试环境
+```
+
+5. 运行 `php run.php`
+
+> 确保你的服务器时间准确并且线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
 
 ## 使用方法
 
 ```php
+<?php
+// run.php
 use XDApp\ServiceReg\Service;
 // 其中 demo 为项目名(AppName)，test 为服务名(ServiceName)，123456 为密钥
 $service = Service::factory('demo', 'test', '123456');
@@ -41,13 +80,12 @@ $service->addWebFunction(function($arg) {
 
 // 2. 将一个文件夹的所有php文件注册进服务，支持子文件夹，php文件名为服务器名前缀，
 // php内返回一个闭包 fuction 或一个匿名 class，返回的匿名class的所有方法名会被注册，参考 service/sys.php
-$service->addServiceByDir(realpath(__DIR__.'/service/'));
 
 // 单个方法推荐使用1，多个方法推荐2
 
 // 3. 使用 addFunction 注册方法
 // 请注意，只有服务名相同的前缀rpc方法才会被页面前端调用到
-service.addFunction(function($arg) {
+$service->addFunction(function($arg) {
     // 获取 context 对象
     $context = Service::getCurrentContext();
     var_dump($context->adminId);
@@ -70,15 +108,14 @@ service.addFunction(function($arg) {
 // 或 连接到外网测试服务器
 //$service->connectToDev();
 
-// RPC调用远端方法
+// RPC调用远端方法，需要XDApp支持后可用
 $list = $service->xdAppService()->my->getMenu();
 // 等同如下：
 // $list = $service->service()->xdapp->my->getMenu();
-print_r($list);
+// print_r($list);
 ```
 
 更多的使用方法see: [https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器](https://github.com/hprose/hprose-php/wiki/06-Hprose-服务器)
-
 
 ### 服务环境
 
