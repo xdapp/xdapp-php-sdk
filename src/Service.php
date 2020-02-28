@@ -2,11 +2,10 @@
 
 namespace XDApp\ServiceReg;
 
-use Swoole\Coroutine\Http\Client;
 
 class Service extends \Hprose\Service {
     /**
-     * @var \Swoole\Client
+     * @var \Swoole\Coroutine\Client
      */
     public $client;
 
@@ -137,7 +136,7 @@ class Service extends \Hprose\Service {
                 $apiMeta = parse_url($url . $uri);
 
                 # 协程客户端
-                $client = new Client($apiMeta['host'], $apiMeta['port'], $apiMeta['scheme'] === 'https');
+                $client = new \Swoole\Coroutine\Http\Client($apiMeta['host'], $apiMeta['port'], $apiMeta['scheme'] === 'https');
                 $client->setHeaders(array_merge([
                     'Host'               => $apiMeta['host'],
                     'User-Agent'         => 'Chrome/49.0.2587.3',
@@ -184,6 +183,24 @@ class Service extends \Hprose\Service {
                 return $rs;
             }, "{$this->serviceName}_{$alias}_". strtolower($method));
         }
+    }
+
+    /**
+     * 获取XDApp服务RPC调用对象
+     *
+     * @return mixed|\Hprose\Proxy
+     */
+    public function xdAppService() {
+        return $this->service()->xdapp;
+    }
+
+    /**
+     * 获取服务RPC调用对象
+     *
+     * @return ServiceClient
+     */
+    public function service() {
+
     }
 
     /**
@@ -533,11 +550,11 @@ class Service extends \Hprose\Service {
             if (self::FLAG_RESULT_MODE === ($flag & self::FLAG_RESULT_MODE)) {
                 # 返回数据的模式
                 // todo 双向功能请求支持
-                //if (!$this->regSuccess) {
-                //    # 在还没注册成功之前对服务器的返回数据不可信任
-                //    return;
-                //}
-                //
+                if (!$this->regSuccess) {
+                    # 在还没注册成功之前对服务器的返回数据不可信任
+                    return;
+                }
+
                 //$finish      = ($flag & self::FLAG_FINISH) === self::FLAG_FINISH ? true : false;
                 //$workerId    = current(unpack('n', substr($data, self::CONTEXT_OFFSET, 2)));
                 //$msg         = new RpcMessage();

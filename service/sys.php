@@ -14,8 +14,10 @@ return new class {
     public function reg($time, $rand, $hash, $extend = false) {
         $context = Service::getCurrentContext();
         if (!$context) {
+            Service::warn($err = "[warn] sys_reg()注册服务，获取上下文失败，请联系管理员");
             return [
                 'status' => false,
+                'err' => $err,
             ];
         }
 
@@ -24,21 +26,29 @@ return new class {
          */
         $service = $context->service;
         if ($service->isRegSuccess()) {
+            Service::warn($err = "[warn] sys_reg()注册服务，已注册成功");
             return [
                 'status' => false,
+                'err'    => $err
             ];
         }
         if ($hash !== sha1("$time.$rand.xdapp.com")) {
             # 验证失败
+            Service::warn($err = "[warn] sys_reg()注册服务，hash验证失败");
             return [
                 'status' => false,
+                'err'    => $err
             ];
         }
 
-        if (abs(time() - $time) > 180) {
+        $now  = time();
+        $diff = abs(time() - $time);
+        if ($diff > 180) {
             # 超时
+            Service::warn($err = "[warn] sys_reg()注册服务请求超时, 请检查服务器时间. 服务端时间戳: $time, 你的时间戳: $now, 差: $diff");
             return [
                 'status' => false,
+                'err'    => $err
             ];
         }
         $time = time();
