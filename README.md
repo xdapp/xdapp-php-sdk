@@ -12,7 +12,7 @@ XDAppRPC服务SDK
 
 ## 安装
 
-! 首先需要安装composer，安装方式（see https://getcomposer.org/download/）
+> 首先需要安装composer，安装方式（see https://getcomposer.org/download/）
 
 ### 在已有PHP项目中加入依赖包
 ```
@@ -62,7 +62,7 @@ $service->connectToDev();  // 连到线上测试环境
 
 > 确保你的服务器时间准确并且线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
 
-## 使用方法
+## 更多使用方法
 
 ```php
 <?php
