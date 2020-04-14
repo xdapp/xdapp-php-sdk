@@ -464,7 +464,7 @@ class Service extends \Hprose\Service {
             $type |= SWOOLE_SSL;
         }
 
-        Swoole\Runtime::enableCoroutine(true);
+        \Swoole\Runtime::enableCoroutine(true);
         $client = new \Swoole\Coroutine\Client($type);
         $client->set($this->getServiceClientConfig($option['tls'] ? $host : null));
 
@@ -616,11 +616,11 @@ class Service extends \Hprose\Service {
                 });
             }
             catch (\Exception $e) {
-                $this->warn($e->getMessage());
+                $this->warn($e);
                 $this->socketSend($cli, $this->endError($e->getMessage(), $context), $context);
             }
             catch (\Throwable $t) {
-                $this->warn($t->getMessage());
+                $this->warn($t);
                 $this->socketSend($cli, $this->endError($t->getMessage(), $context), $context);
             }
         }
@@ -751,6 +751,31 @@ class Service extends \Hprose\Service {
         $client  = self::createSentryClient($option);
         $channel = new \Swoole\Coroutine\Channel(100);
         $uri     = sprintf('/api/%d/store/', $option->getProjectId());
+
+        \Swoole\Runtime::enableCoroutine(true);
+
+        set_error_handler(function($errno, $errstr, $errfile, $errline) {
+            $error = new \ErrorException($errstr, $errno, 1, $errfile, $errline);
+            self::warn($error);
+            return true;
+        });
+
+        register_shutdown_function(function() {
+            $e = error_get_last();
+            if ($e == null) {
+                return;
+            }
+            switch ($e['type']) {
+                case E_ERROR:
+                case E_PARSE:
+                case E_USER_ERROR:
+                case E_CORE_ERROR:
+                case E_COMPILE_ERROR:
+                    $error = new \ErrorException($e['message'], $e['type'], 1, $e['file'], $e['line']);
+                    self::warn($error);
+                    break;
+            }
+        });
 
         \Swoole\Coroutine::create(function() use ($client, $channel, $uri) {
             $closeTick = 0;
