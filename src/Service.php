@@ -834,6 +834,7 @@ class Service extends \Hprose\Service {
                 $event->setContext('data', $data);
             }
             $event->getUserContext()->setUsername($userName);
+            $event->getTagsContext()->setData(['swoole' => SWOOLE_VERSION]);
             $data = gzencode(json_encode($event->toArray(), JSON_UNESCAPED_UNICODE), 9);
             \Swoole\Coroutine::create(function() use ($channel, $data) {
                 $channel->push($data);
