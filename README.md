@@ -143,6 +143,7 @@ userdata    | 默认 stdClass 对象，可以自行设置参数
 
 更多参数见 `XDApp\ServiceReg\Context` 对象
 
+
 `Service` 常用方法如下：
 
 ### `connectToProduce()`
@@ -225,3 +226,8 @@ this.$service.gm.myApi.post('/uri?a=1', {a:'arg1', b:'arg2'}, 15);
 
 see [https://github.com/hprose/hprose-php/wiki/11-Hprose-过滤器](https://github.com/hprose/hprose-php/wiki/11-Hprose-过滤器)
 
+### Sentry支持
+
+首先需要安装 sentry : `composer require sentry/sdk`, 然后 `XDApp\ServiceReg\Service::sentryInit('https://<key>@<organization>.ingest.sentry.io/<project>');` 即可
+
+更多参数见 [https://docs.sentry.io/error-reporting/configuration/?platform=php](https://docs.sentry.io/error-reporting/configuration/?platform=php)

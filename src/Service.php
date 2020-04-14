@@ -2,7 +2,6 @@
 
 namespace XDApp\ServiceReg;
 
-
 class Service extends \Hprose\Service {
     /**
      * @var \Swoole\Coroutine\Client
@@ -88,6 +87,10 @@ class Service extends \Hprose\Service {
         $service->addServiceByDir(realpath(__DIR__ . '/../service'), false);
 
         return $service;
+    }
+
+    public function __construct() {
+        parent::__construct();
     }
 
     /**
@@ -178,10 +181,10 @@ class Service extends \Hprose\Service {
                 ];
                 $client->close();
 
-                $this->debug(sprintf("[Curl] Http Proxy, method: %s, code: %s, url: %s, headers: %s, data: %s, body: %s", $method, $rs['code'], $url.$uri, json_encode($rs['headers']), substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 1000), substr($rs['body'], 0, 1000)));
+                $this->debug(sprintf("[Curl] Http Proxy, method: %s, code: %s, url: %s, headers: %s, data: %s, body: %s", $method, $rs['code'], $url . $uri, json_encode($rs['headers']), substr(json_encode($data, JSON_UNESCAPED_UNICODE), 0, 1000), substr($rs['body'], 0, 1000)));
 
                 return $rs;
-            }, "{$this->serviceName}_{$alias}_". strtolower($method));
+            }, "{$this->serviceName}_{$alias}_" . strtolower($method));
         }
     }
 
@@ -481,7 +484,7 @@ class Service extends \Hprose\Service {
                     }
                 }
                 else {
-                    $this->log("连接服务器成功 {$host}:{$port}");
+                    $this->log("连接到服务器 " . ($option['tls'] ? 'tls' : 'tcp') . "://{$host}:{$port}");
                     break;
                 }
             }
@@ -725,6 +728,139 @@ class Service extends \Hprose\Service {
     }
 
     /**
+     * 使用Sentry汇报错误，如果没有安装Sentry则返回false
+     *
+     * @see https://docs.sentry.io/error-reporting/configuration/?platform=php
+     * @param array|string $dnsOrConfig
+     * @param string $userName 推送到Sentry的用户名
+     * @return bool
+     */
+    public static function sentryInit($dnsOrConfig, $userName = 'PhpSDK') {
+        if (is_string($dnsOrConfig)) {
+            $config = ['dsn' => $dnsOrConfig];
+        }
+        else {
+            $config = $dnsOrConfig;
+        }
+        if (!function_exists('\\Sentry\\init')) {
+            return false;
+        }
+
+        $option  = new \Sentry\Options($config);
+        $client  = self::createSentryClient($option);
+        $channel = new \Swoole\Coroutine\Channel(100);
+        $uri     = sprintf('/api/%d/store/', $option->getProjectId());
+
+        \Swoole\Coroutine::create(function() use ($client, $channel, $uri) {
+            $closeTick = 0;
+            $last = null;
+            $tickTime = 0;
+            while (true) {
+                $data = $channel->pop(-1);
+                if ($data === false) {
+                    return;
+                }
+                for ($i = 0; $i < 2; $i++) {
+                    $rs = $client->post($uri, $data);
+                    if (false === $rs) {
+                        echo '[warn] - ' . date('Y-m-d H:i:s') . " - Send data to sentry fail, host: {$client->host}, port: {$client->port}, errCode: {$client->errCode}, errMsg: {$client->errMsg}\n";
+                        usleep(10000);
+                        continue;
+                    }
+                    else if ($client->statusCode !== 200) {
+                        echo '[warn] - ' . date('Y-m-d H:i:s') . " - Send data to sentry fail, host: {$client->host}, port: {$client->port}, result: {$client->body}\n";
+                    }
+                    $client->getBody();
+                    break;
+                }
+                
+                $now = time();
+                if ($closeTick > 0 && $now - $tickTime > 5) {
+                    // 超过5秒，移除后重新加
+                    \Swoole\Timer::clear($closeTick);
+                    $closeTick = 0;
+                }
+                if (!$closeTick) {
+                    $closeTick = \Swoole\Timer::after(10000, function() use (&$closeTick, $client) {
+                        // 10秒后关闭连接
+                        $client->close();
+                        $closeTick = 0;
+                    });
+                    $tickTime = $now;
+                }
+            }
+        });
+
+        self::setLogger(function($type, $msg, $data = []) use ($channel, $option, $userName) {
+            if ($type !== 'warn' && $type !== 'error') {
+                # 只有 warn 和 error 的会推送
+                return;
+            }
+            $event = new \Sentry\Event();
+            if (is_object($msg) && $msg instanceof \Throwable) {
+                \Sentry\captureException($msg);
+                self::addSentryEventException($event, $option, $msg);
+            }
+            else {
+                $event->setMessage((string)$msg);
+            }
+            if ($data) {
+                $event->setContext('data', $data);
+            }
+            $event->getUserContext()->setUsername($userName);
+            $data = gzencode(json_encode($event->toArray(), JSON_UNESCAPED_UNICODE), 9);
+            \Swoole\Coroutine::create(function() use ($channel, $data) {
+                $channel->push($data);
+            });
+        });
+
+        return true;
+    }
+
+    /**
+     * 获取swoole的客户端
+     *
+     * @param \Sentry\Options $option
+     * @return \Swoole\Coroutine\Http\Client
+     */
+    protected static function createSentryClient(\Sentry\Options $option) {
+        $dsn    = $option->getDsn();
+        $parsed = parse_url($dsn);
+        $ssl    = $parsed['scheme'] === 'https';
+        $host   = $parsed['host'];
+        $port   = $parsed['port'] ?? ($ssl ? 443 : 80);
+        $header = [
+            'Content-Type'     => 'application/json',
+            'User-Agent'       => 'sentry.php/2.3.2',
+            'X-Sentry-Auth'    => 'Sentry sentry_version=7, sentry_client=sentry.php/2.3.2, sentry_key=' . $option->getPublicKey(),
+            'Content-Encoding' => 'gzip',
+            'Accept-Encoding'  => 'gzip',
+        ];
+
+        $client = new \Swoole\Coroutine\Http\Client($host, $port, $ssl);
+        $client->setHeaders($header);
+        $client->set(['timeout' => 5.0]);
+        return $client;
+    }
+
+    protected static function addSentryEventException(\Sentry\Event $event, \Sentry\Options $option, \Throwable $exception) {
+        $exceptions       = [];
+        $currentException = $exception;
+
+        $serializer               = new \Sentry\Serializer\Serializer($option);
+        $representationSerializer = new \Sentry\Serializer\RepresentationSerializer($option);
+        do {
+            $exceptions[] = [
+                'type'       => \get_class($currentException),
+                'value'      => $currentException->getMessage(),
+                'stacktrace' => \Sentry\Stacktrace::createFromBacktrace($option, $serializer, $representationSerializer, $currentException->getTrace(), $currentException->getFile(), $currentException->getLine()),
+            ];
+        }
+        while ($currentException = $currentException->getPrevious());
+        $event->setExceptions($exceptions);
+    }
+
+    /**
      * 设置一个log处理方法
      *
      * 方法接受3个参数，分别是：
@@ -743,48 +879,44 @@ class Service extends \Hprose\Service {
         if (self::$logger) {
             $logger = self::$logger;
             $logger(__FUNCTION__, $msg, $data);
-            return;
         }
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function info($msg, $data = null) {
         if (self::$logger) {
             $logger = self::$logger;
             $logger(__FUNCTION__, $msg, $data);
-            return;
         }
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function warn($msg, $data = null) {
         if (self::$logger) {
             $logger = self::$logger;
             $logger(__FUNCTION__, $msg, $data);
-            return;
         }
         if (is_object($msg) && $msg instanceof \Exception) {
-            $msg = $msg->getTraceAsString();
+            $msg = $msg->getMessage();
         }
-        echo '[warn] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[warn] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function debug($msg, $data = null) {
         if (self::$logger) {
             $logger = self::$logger;
             $logger(__FUNCTION__, $msg, $data);
-            return;
         }
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getTraceAsString();
         }
-        echo '[debug] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[debug] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     /**
@@ -802,7 +934,12 @@ class Service extends \Hprose\Service {
         $headerAndContextLen = strlen($context->headerAndContext);
 
         if ($dataLength <= 0x200000) {
-            $cli->send(pack('CCN', $flag | self::FLAG_FINISH, $ver, $headerAndContextLen + strlen($data)) . $context->headerAndContext . $data);
+            $rs = $cli->send($msg = pack('CCN', $flag | self::FLAG_FINISH, $ver, $headerAndContextLen + strlen($data)) . $context->headerAndContext . $data);
+            if (false === $rs) {
+                $this->warn("发送RPC数据失败，长度" . strlen($msg));
+                return;
+            }
+            $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($msg));
         }
         else {
             for ($i = 0; $i < $dataLength; $i += 0x200000) {
@@ -810,9 +947,12 @@ class Service extends \Hprose\Service {
                 $chunk       = substr($data, $i, $chunkLength);
                 $currentFlag = ($dataLength - $i === $chunkLength) ? $flag | self::FLAG_FINISH : $flag;
 
-                if (false === $cli->send(pack('CNN', $currentFlag, $ver, $headerAndContextLen + $chunkLength) . $context->headerAndContext . $chunk)) {
+                $rs = $cli->send($msg = pack('CNN', $currentFlag, $ver, $headerAndContextLen + $chunkLength) . $context->headerAndContext . $chunk);
+                if (false === $rs) {
+                    $this->warn("发送RPC数据失败，长度" . strlen($msg));
                     return;
                 }
+                $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($msg));
             }
         }
     }
