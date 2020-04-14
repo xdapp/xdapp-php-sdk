@@ -464,6 +464,7 @@ class Service extends \Hprose\Service {
             $type |= SWOOLE_SSL;
         }
 
+        Swoole\Runtime::enableCoroutine(true);
         $client = new \Swoole\Coroutine\Client($type);
         $client->set($this->getServiceClientConfig($option['tls'] ? $host : null));
 
@@ -773,7 +774,7 @@ class Service extends \Hprose\Service {
                     $client->getBody();
                     break;
                 }
-                
+
                 $now = time();
                 if ($closeTick > 0 && $now - $tickTime > 5) {
                     // 超过5秒，移除后重新加
