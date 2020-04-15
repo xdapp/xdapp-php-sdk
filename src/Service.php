@@ -730,6 +730,11 @@ class Service extends \Hprose\Service {
             $this->info('已暴露但Web不会调用的RPC：' . implode(', ', $allService['other']));
             $this->info("若需要暴露给Web使用，请加: {$this->serviceName} 前缀");
         }
+
+        # 增加 sentry
+        if (isset($data['sentry']) && null === self::$logger) {
+            self::sentryInit($data['sentry']);
+        }
     }
 
     /**
