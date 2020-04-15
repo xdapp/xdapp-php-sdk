@@ -779,8 +779,8 @@ class Service extends \Hprose\Service {
 
         \Swoole\Coroutine::create(function() use ($client, $channel, $uri) {
             $closeTick = 0;
-            $last = null;
-            $tickTime = 0;
+            $last      = null;
+            $tickTime  = 0;
             while (true) {
                 $data = $channel->pop(-1);
                 if ($data === false) {
@@ -812,6 +812,7 @@ class Service extends \Hprose\Service {
                         $client->close();
                         $closeTick = 0;
                     });
+
                     $tickTime = $now;
                 }
             }
@@ -836,9 +837,15 @@ class Service extends \Hprose\Service {
             $event->getUserContext()->setUsername($userName);
             $event->getTagsContext()->setData(['swoole' => SWOOLE_VERSION]);
             $data = gzencode(json_encode($event->toArray(), JSON_UNESCAPED_UNICODE), 9);
-            \Swoole\Coroutine::create(function() use ($channel, $data) {
-                $channel->push($data);
-            });
+            $cid  = \Swoole\Coroutine::getCid();
+            if ($cid > 0) {
+                $this->channel->push($data);
+            }
+            else {
+                \Swoole\Coroutine::create(function() use ($channel, $data) {
+                    $this->channel->push($data);
+                });
+            }
         });
 
         return true;
@@ -910,7 +917,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[log] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', ' . json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function info($msg, $data = null) {
@@ -921,7 +928,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[info] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', ' . json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function warn($msg, $data = null) {
@@ -932,7 +939,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getMessage();
         }
-        echo '[warn] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[warn] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', ' . json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     public static function debug($msg, $data = null) {
@@ -943,7 +950,7 @@ class Service extends \Hprose\Service {
         if (is_object($msg) && $msg instanceof \Exception) {
             $msg = $msg->getTraceAsString();
         }
-        echo '[debug] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', '. json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
+        echo '[debug] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', ' . json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
     /**
