@@ -102,7 +102,7 @@ return new class {
         return true;
     }
 
-    public function regErr($msg, $data = null) {
+    public function regErr($msg, $data = []) {
         # 已经注册了
         $context = Service::getCurrentContext();
         if (!$context)return;
@@ -112,7 +112,15 @@ return new class {
             return;
         }
 
-        $context->service->setRegErr($msg, $data);
+        $context->service->closeByServer($msg, $data);
+    }
+
+    public function close($msg = 'Close by server', $data = []) {
+        $context = Service::getCurrentContext();
+        if (!$context)return false;
+
+        $context->service->closeByServer($msg, $data);
+        return true;
     }
 
     /**

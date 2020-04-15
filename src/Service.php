@@ -472,7 +472,7 @@ class Service extends \Hprose\Service {
             connect:
             while (true) {
                 if (!$client->connect($host, $port, 1)) {
-                    if ($this->setClosed()) {
+                    if ($this->isClosedByServer()) {
                         // 重新连接
                         // 4.2.0版本增加了对sleep 函数的Hook, 不会阻塞进程 see https://wiki.swoole.com/wiki/page/992.html
                         $this->log('RPC 连接失败, 1秒后自动重连. errCode: ' . $client->errCode);
@@ -494,7 +494,7 @@ class Service extends \Hprose\Service {
                 $rs = $client->recv(-1);
                 if ($rs === false || $rs === '') {
                     // 连接断开
-                    if ($this->setClosed()) {
+                    if ($this->isClosedByServer()) {
                         // 重新连接
                         $this->log('RPC 连接断开, 1秒后自动重连. errCode: ' . $client->errCode);
                         $client->close();
@@ -519,7 +519,7 @@ class Service extends \Hprose\Service {
      *
      * @return bool true: 可以尝试重新连接，不需要再尝试重新连接
      */
-    protected function setClosed() {
+    protected function isClosedByServer() {
         $this->client     = null;
         $this->regSuccess = false;
 
@@ -629,6 +629,11 @@ class Service extends \Hprose\Service {
         }
     }
 
+    function sendError($error, \stdClass $context) {
+        self::warn($error);
+        return parent::sendError($error, $context);
+    }
+
     /**
      * 是否注册成功了
      *
@@ -674,12 +679,11 @@ class Service extends \Hprose\Service {
         return $this->swooleServer;
     }
 
-    public function setRegErr($msg, $data) {
+    public function closeByServer($msg, $data) {
         $this->regSuccess  = false;
         $this->isRegError  = true;
         $this->serviceData = [];
-
-        $this->warn($msg, $data);
+        $this->info($msg, $data);
     }
 
     public function setRegSuccess(array $data) {
@@ -839,11 +843,11 @@ class Service extends \Hprose\Service {
             $data = gzencode(json_encode($event->toArray(), JSON_UNESCAPED_UNICODE), 9);
             $cid  = \Swoole\Coroutine::getCid();
             if ($cid > 0) {
-                $this->channel->push($data);
+                $channel->push($data);
             }
             else {
                 \Swoole\Coroutine::create(function() use ($channel, $data) {
-                    $this->channel->push($data);
+                    $channel->push($data);
                 });
             }
         });
