@@ -38,6 +38,8 @@ class Service extends \Hprose\Service {
      */
     protected $swooleServer;
 
+    protected $buffers = [];
+
     /**
      * @var callable|null
      */
@@ -67,6 +69,7 @@ class Service extends \Hprose\Service {
     const FLAG_RESULT_MODE = 2;                                            # 请求返回模式，表明这是一个RPC结果返回
     const FLAG_FINISH      = 4;                                            # 是否消息完成，用在消息返回模式里，表明RPC返回内容结束
     const FLAG_TRANSPORT   = 8;                                            # 转发浏览器RPC请求，表明这是一个来自浏览器的请求
+    const FLAG_COMPRESS    = 16;                                           # 数据包body部分开启了压缩
     const PREFIX_LENGTH    = 6;                                            # Flag 1字节、 Ver 1字节、 Length 4字节、HeaderLength 1字节
     const HEADER_LENGTH    = 17;                                           # 默认消息头长度, 不包括 PREFIX_LENGTH
     const CONTEXT_OFFSET   = self::PREFIX_LENGTH + self::HEADER_LENGTH;    # 自定义上下文内容所在位置，23
@@ -90,6 +93,9 @@ class Service extends \Hprose\Service {
     }
 
     public function __construct() {
+        if (!function_exists('snappy_uncompress')) {
+            $this->info("您的php未安装snappy扩展，不支持数据压缩，你可以继续使用，但是不支持接受超过2MB的数据包，安装扩展 see https://github.com/kjdev/php-ext-snappy");
+        }
         parent::__construct();
     }
 
@@ -551,6 +557,8 @@ class Service extends \Hprose\Service {
         $flag    = $dataArr['Flag'];
         $ver     = $dataArr['Ver'];
         if ($ver === 1) {
+            $this->debug('Receive data length: ' . strlen($data));
+
             if (self::FLAG_RESULT_MODE === ($flag & self::FLAG_RESULT_MODE)) {
                 # 返回数据的模式
                 // todo 双向功能请求支持
@@ -600,11 +608,50 @@ class Service extends \Hprose\Service {
             $context->userdata         = new \stdClass();
             $context->headerAndContext = $headerAndContext;
             $context->receiveParam     = $dataArr;
-            $context->requestId        = $dataArr['RequestId'];
+            $context->requestId        = $requestId = $dataArr['RequestId'];
             $context->adminId          = $dataArr['AdminId'];
             $context->appId            = $dataArr['AppId'];
             $context->serviceId        = $dataArr['ServiceId'];
-            $context->service          = $this;
+
+            if (self::FLAG_FINISH !== ($flag & self::FLAG_FINISH)) {
+                # 未完毕
+                $this->debug('Receive not finish data length: ' . strlen($data));
+                if (isset($this->buffers[$requestId])) {
+                    $this->buffers[$requestId]['rpcData'] .= $rpcData;
+                    # 更换一个定时器
+                    \Swoole\Timer::clear($this->buffers[$requestId]['timeTick']);
+                    \Swoole\Timer::after(60 * 1000, function() use ($requestId) {
+                        unset($this->buffers[$requestId]);
+                        $this->debug('Clear timeout buffer, request id: '. $requestId);
+                    });
+                }
+                else {
+                    $this->buffers[$requestId] = [
+                        'context' => $context,
+                        'rpcData' => $rpcData,
+                        'timeTick' => \Swoole\Timer::after(60 * 1000, function() use ($requestId) {
+                            unset($this->buffers[$requestId]);
+                            $this->debug('Clear timeout buffer');
+                        }),
+                    ];
+                }
+                return;
+            }
+
+            # 有分包数据，从buffer中获取
+            if (isset($this->buffers[$requestId])) {
+                $context = $this->buffers[$requestId]['context'];
+                $rpcData = $this->buffers[$requestId]['rpcData'] . $rpcData;
+                \Swoole\Timer::clear($this->buffers[$requestId]['timeTick']);
+                unset($this->buffers[$requestId]);
+            }
+
+            if (self::FLAG_COMPRESS === ($flag & self::FLAG_COMPRESS)) {
+                # 压缩的数据包
+                $rpcData = snappy_uncompress($rpcData);
+            }
+
+            $context->service = $this;
 
             //$this->userFatalErrorHandler = function($error) use ($cli, $context) {
             //    $this->socketSend($cli, $this->endError($error, $context), $context);
@@ -1022,7 +1069,8 @@ class Service extends \Hprose\Service {
             'package_length_type'   => 'N',
             'package_length_offset' => 2,
             'package_body_offset'   => 6,
-            'package_max_length'    => 0x21000,
+            'package_max_length'    => 0x210000,
+            'output_buffer_size'    => 0x10000000,
         ];
 
         // ssl 连接
