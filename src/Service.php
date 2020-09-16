@@ -45,6 +45,8 @@ class Service extends \Hprose\Service {
      */
     protected static $logger;
 
+    protected static $isDebug = false;
+
     protected static $ProductionServer = [
         'host' => 'service-prod.xdapp.com',
         'port' => 8900,
@@ -64,6 +66,11 @@ class Service extends \Hprose\Service {
         'host' => 'service-eu.xdapp.com',
         'port' => 8900,
     ];
+
+    protected static $coList = [];
+    protected static $coCurrentResult = false;
+    protected static $lastError;
+    protected static $receiveBuffer = [];
 
     const FLAG_SYS_MSG     = 1;                                            # 来自系统调用的消息请求
     const FLAG_RESULT_MODE = 2;                                            # 请求返回模式，表明这是一个RPC结果返回
@@ -96,6 +103,26 @@ class Service extends \Hprose\Service {
         if (!function_exists('snappy_uncompress')) {
             $this->info("您的php未安装snappy扩展，不支持数据压缩，你可以继续使用，但是不支持接受超过2MB的数据包，安装扩展 see https://github.com/kjdev/php-ext-snappy");
         }
+
+        # 清理过期的协程
+        \Swoole\Timer::tick(1000, function() {
+            $t = microtime(true);
+            foreach (self::$coList as $id => $item) {
+                if ($t > $item['time']) {
+                    self::$coCurrentResult = false;
+                    \Swoole\Coroutine::resume($id);
+                    unset(self::$coList[$id]);
+                    self::$lastError = 'Rpc response timeout';
+                    $this->warn(new \Exception("Coroutine timeout, auto remove it"), ['coId' => self::$coList[$id]] + $item);
+                }
+            }
+            foreach (self::$receiveBuffer as $rpcId => $item) {
+                if ($t > $item['time']) {
+                    unset(self::$receiveBuffer[$rpcId]);
+                }
+            }
+        });
+
         parent::__construct();
     }
 
@@ -475,23 +502,30 @@ class Service extends \Hprose\Service {
         $client->set($this->getServiceClientConfig($option['tls'] ? $host : null));
 
         \Swoole\Coroutine::create(function() use ($client, $host, $port, $option) {
+            $pingTick = 0;
             connect:
             while (true) {
                 if (!$client->connect($host, $port, 1)) {
                     if ($this->isClosedByServer()) {
                         // 重新连接
                         // 4.2.0版本增加了对sleep 函数的Hook, 不会阻塞进程 see https://wiki.swoole.com/wiki/page/992.html
-                        $this->log('RPC 连接失败, 1秒后自动重连. errCode: ' . $client->errCode);
+                        $this->warn('RPC 连接失败, 1秒后自动重连. errCode: ' . $client->errCode);
                         $client->close();
                         sleep(1);
                     }
                     else {
-                        $this->log('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
+                        $this->warn('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
                         return;
                     }
                 }
                 else {
                     $this->log("连接到服务器 " . ($option['tls'] ? 'tls' : 'tcp') . "://{$host}:{$port}");
+
+                    # 增加ping
+                    if ($pingTick > 0) {
+                        \Swoole\Timer::clear($pingTick);
+                    }
+                    $pingTick = $this->createPingTick($client);
                     break;
                 }
             }
@@ -502,13 +536,13 @@ class Service extends \Hprose\Service {
                     // 连接断开
                     if ($this->isClosedByServer()) {
                         // 重新连接
-                        $this->log('RPC 连接断开, 1秒后自动重连. errCode: ' . $client->errCode);
+                        $this->warn('RPC 连接断开, 1秒后自动重连. errCode: ' . $client->errCode);
                         $client->close();
                         sleep(1);
                         goto connect;
                     }
                     else {
-                        $this->log('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
+                        $this->warn('RPC 连接断开, 请重启服务. errCode: ' . $client->errCode);
                     }
                     break;
                 }
@@ -518,6 +552,61 @@ class Service extends \Hprose\Service {
             }
         });
         return $client;
+    }
+
+    protected function createPingTick($client) {
+        return \Swoole\Timer::tick(5000, function() use ($client) {
+            if ($this->regSuccess && $client->isConnected()) {
+                $rs = $this->callXDAppService($client, 'ping', [], 0, 0, 5);
+                if (!$rs) {
+                    $this->log("Ping server timeout");
+                    $client->close();
+                }
+            }
+        });
+    }
+
+    /**
+     * 请求RPC调用，会使用协程隐式切换
+     *
+     * 如果返回 false 需要获取错误，可以通过 `$this->getLastError()` 获取
+     *
+     * @param \Swoole\Client $client
+     * @param string $fun
+     * @param array $args
+     * @param int $adminId 管理员ID
+     * @param int $timeout 超时时间，秒
+     * @return mixed|false 失败返回 false
+     */
+    public function callXDAppService($client, $fun, $args = [], $adminId = 0, $timeout = 30) {
+        $id = \Swoole\Coroutine::getCid();
+
+        self::$coList[$id] = [
+            'time'     => $timeout + microtime(true),
+            'function' => $fun,
+            'adminId'  => $adminId,
+        ];
+
+        # AppId     | 服务ID      | rpc请求序号  | 管理员ID      | 自定义信息长度
+        # ----------|------------|------------|-------------|-----------------
+        # AppId     | ServiceId  | RequestId  | AdminId     | ContextLength
+        # 4         | 4          | 4          | 4           | 1
+        # N         | N          | N          | N           | C
+
+        $headerAndBody = pack('NNNNC', 0, 0, $id, $adminId, 0);
+
+        $body = \Hprose\Tags::TagCall . hprose_serialize($fun) . hprose_serialize($args) . \Hprose\Tags::TagEnd;
+        $rs   = $this->socketSend($client, self::FLAG_SYS_MSG, $headerAndBody, $body);
+        if ($rs) {
+            # 协程挂起
+            \Swoole\Coroutine::yield();
+        }
+        else {
+            self::$lastError       = 'Send rpc request fail';
+            self::$coCurrentResult = false;
+        }
+        unset(self::$coList[$id]);
+        return self::$coCurrentResult;
     }
 
     /**
@@ -567,14 +656,7 @@ class Service extends \Hprose\Service {
                     return;
                 }
 
-                //$finish      = ($flag & self::FLAG_FINISH) === self::FLAG_FINISH ? true : false;
-                //$workerId    = current(unpack('n', substr($data, self::CONTEXT_OFFSET, 2)));
-                //$msg         = new RpcMessage();
-                //$msg->id     = current(unpack('N', substr($data, self::PREFIX_LENGTH + 8, 4)));
-                //$msg->tag    = substr($data, self::CONTEXT_OFFSET + 2, 1);
-                //$msg->data   = substr($data, self::CONTEXT_OFFSET + 3);
-                //$msg->finish = $finish;
-                //$msg->send($workerId);
+                $this->onRpcMessage($data);
 
                 return;
             }
@@ -591,7 +673,7 @@ class Service extends \Hprose\Service {
                         # 还没有注册完成前不允许并行调用
                         return;
                     }
-                    list($funName) = $fun[0];
+                    [$funName] = $fun[0];
                     if (!in_array($funName, ['sys_reg', 'sys_regErr', 'sys_regOk'])) {
                         $this->warn('在还没有注册完成时非法调用了Rpc方法:' . $funName . '(), 请求数据: ' . $rpcData);
 
@@ -607,7 +689,6 @@ class Service extends \Hprose\Service {
             $context                   = new Context();
             $context->userdata         = new \stdClass();
             $context->headerAndContext = $headerAndContext;
-            $context->receiveParam     = $dataArr;
             $context->requestId        = $requestId = $dataArr['RequestId'];
             $context->adminId          = $dataArr['AdminId'];
             $context->appId            = $dataArr['AppId'];
@@ -646,9 +727,12 @@ class Service extends \Hprose\Service {
                 unset($this->buffers[$requestId]);
             }
 
+            $rsFlag = $flag | self::FLAG_RESULT_MODE;
             if (self::FLAG_COMPRESS === ($flag & self::FLAG_COMPRESS)) {
                 # 压缩的数据包
                 $rpcData = snappy_uncompress($rpcData);
+                # 移除标签
+                $rsFlag = $rsFlag ^ self::FLAG_COMPRESS;
             }
 
             $context->service = $this;
@@ -658,23 +742,115 @@ class Service extends \Hprose\Service {
             //};
 
             try {
-                $this->defaultHandle($rpcData, $context)->then(function($data) use ($cli, $context) {
-                    $this->socketSend($cli, $data, $context);
+                $this->defaultHandle($rpcData, $context)->then(function($data) use ($cli, $headerAndContext, $rsFlag) {
+                    $this->socketSend($cli, $rsFlag, $headerAndContext, $data);
                 });
             }
             catch (\Exception $e) {
                 $this->warn($e);
-                $this->socketSend($cli, $this->endError($e->getMessage(), $context), $context);
+                $this->socketSend($cli, $rsFlag, $headerAndContext, $this->endError($e->getMessage(), $context));
             }
             catch (\Throwable $t) {
                 $this->warn($t);
-                $this->socketSend($cli, $this->endError($t->getMessage(), $context), $context);
+                $this->socketSend($cli, $rsFlag, $headerAndContext, $this->endError($t->getMessage(), $context));
             }
         }
         else {
             $this->warn('消息版本错误, ' . $ver);
         }
     }
+
+    protected function onRpcMessage($message) {
+        # 标识   | 版本    | 长度    | 头信息       | 自定义内容    |  正文
+        # ------|--------|---------|------------|-------------|-------------
+        # Flag  | Ver    | Length  | Header     | Context      | Body
+        # 1     | 1      | 4       | 17         | 默认0，不定   | 不定
+        # C     | C      | N       |            |             |
+        # 0     | 1      | 2       | 6          | 23          | 23 or 23+ContextLength
+        #
+        #
+        # 其中 Header 部分包括
+        #
+        # AppId     | 服务ID      | rpc请求序号  | 管理员ID      | 自定义信息长度
+        # ----------|------------|------------|-------------|-----------------
+        # AppId     | ServiceId  | RequestId  | AdminId     | ContextLength
+        # 4         | 4          | 4          | 4           | 1
+        # N         | N          | N          | N           | C
+        # 6         | 10         | 14         | 18          | 22
+
+        # CFlag/CVer/NLength/NAppId/NServiceId/NRequestId/NAdminId/CContextLength/nWorkerId/a*reqBody
+
+        # c 1字节，N 4字节
+
+        $dataArr = unpack('CFlag/CVer', substr($message, 0, 2));
+        $flag    = $dataArr['Flag'];
+        $ver     = $dataArr['Ver'];
+
+        if ($ver === 1 && ($flag & self::FLAG_SYS_MSG) === self::FLAG_SYS_MSG) {
+            # 14 为 RequestId 所在位置
+            # Body位置第一个是Hprose的Tag
+            $id = current(unpack('N', substr($message, 14, 4)));
+            if (!$id) {
+                return;
+            }
+            $bodyPos = self::CONTEXT_OFFSET;
+            $finish  = ($flag & self::FLAG_FINISH) === self::FLAG_FINISH ? true : false;
+            $tag     = substr($message, $bodyPos, 1);
+            $rsBody  = substr($message, $bodyPos + 1);
+
+            if (false === $finish) {
+                # 消息未完成，加入到 buffer 里
+                self::$receiveBuffer[$id] = [
+                    'time' => microtime(true) + 30,        # 30秒后清理数据
+                    'data' => $rsBody,
+                ];
+
+                return;
+            }
+            elseif (isset(self::$receiveBuffer[$id])) {
+                # 将buffer加入
+                $rsBody = self::$receiveBuffer[$id]['data'] . $rsBody;
+                unset(self::$receiveBuffer[$id]);
+            }
+
+            switch ($tag) {
+                case \Hprose\Tags::TagError:
+                    $dataArr   = unpack('CFlag/CVer/NLength/NAppId/NServiceId/NRequestId/NAdminId/CContextLength', substr($message, 0, self::CONTEXT_OFFSET));
+                    $errorData = [
+                        'appId'     => $dataArr['AppId'],
+                        'adminId'   => $dataArr['AdminId'],
+                        'serviceId' => $dataArr['ServiceId'],
+                    ];
+                    try {
+                        self::$lastError = hprose_unserialize($rsBody);
+                        $this->warn(new \Exception(self::$lastError), $errorData);
+                    }
+                    catch (\Exception $e) {
+                        self::$lastError = $e->getMessage();
+                        $this->warn(new \Exception('解析RPC返回的错误信息失败: ' . self::$lastError), $errorData);
+                    }
+                    self::$coCurrentResult = false;
+                    \Swoole\Coroutine::resume($id);
+                    break;
+
+                case \Hprose\Tags::TagResult:
+                    self::$coCurrentResult = hprose_unserialize($rsBody);
+                    self::$lastError       = null;
+
+                    # 协程切换
+                    \Swoole\Coroutine::resume($id);
+                    break;
+
+                default:
+                    self::$coCurrentResult = false;
+                    self::$lastError       = "RPC 系统调用收到一个未定义的方法返回: {$tag}{$rsBody}";
+                    $this->warn(self::$lastError);
+                    \Swoole\Coroutine::resume($id);
+                    break;
+            }
+        }
+    }
+
 
     function sendError($error, \stdClass $context) {
         self::warn($error);
@@ -757,7 +933,7 @@ class Service extends \Hprose\Service {
                 $allService['other'][] = $item;
                 continue;
             }
-            list($type, $func) = explode('_', $item, 2);
+            [$type, $func] = explode('_', $item, 2);
             $name = str_replace('_', '.', $func) . '()';
             switch ($type) {
                 case 'sys':
@@ -998,7 +1174,12 @@ class Service extends \Hprose\Service {
         echo '[warn] - ' . date('Y-m-d H:i:s') . ' - ' . $msg . ($data ? ', ' . json_encode($data, JSON_UNESCAPED_UNICODE) : '') . "\n";
     }
 
+    public static function openDebug($open = true) {
+        self::$isDebug = $open;
+    }
+
     public static function debug($msg, $data = null) {
+        if (!self::$isDebug)return;
         if (self::$logger) {
             $logger = self::$logger;
             $logger(__FUNCTION__, $msg, $data);
@@ -1011,40 +1192,46 @@ class Service extends \Hprose\Service {
 
     /**
      * @param \Swoole\Client $cli
-     * @param string $data
-     * @param \stdClass $context
+     * @param int $flag
+     * @param string $headerAndContext
+     * @param string $body
+     * @return bool
      */
-    protected function socketSend($cli, $data, $context) {
+    protected function socketSend($cli, $flag, $headerAndContext, $body) {
         // Flag/CVer/NLength/NAppId/NServiceId/NRequestId/NAdminId/CContextLength
-        $dataArr    = $context->receiveParam;
-        $dataLength = strlen($data);
-        $flag       = $dataArr['Flag'] | self::FLAG_RESULT_MODE;
-        $ver        = $dataArr['Ver'];
+        $ver        = 1;
+        $bodyLength = strlen($body);
 
-        $headerAndContextLen = strlen($context->headerAndContext);
+        $headerAndContextLen = strlen($headerAndContext);
 
-        if ($dataLength <= 0x200000) {
-            $rs = $cli->send($msg = pack('CCN', $flag | self::FLAG_FINISH, $ver, $headerAndContextLen + strlen($data)) . $context->headerAndContext . $data);
+        if ($bodyLength <= 0x200000) {
+            $package = pack('CCN', $flag | self::FLAG_FINISH, $ver, $headerAndContextLen + strlen($body)) . $headerAndContext . $body;
+            $rs      = $cli->send($package);
             if (false === $rs) {
-                $this->warn("发送RPC数据失败，长度" . strlen($msg));
-                return;
+                $this->warn("发送RPC数据失败，长度" . strlen($package));
+                return false;
             }
-            $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($msg));
+            $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($package));
         }
         else {
-            for ($i = 0; $i < $dataLength; $i += 0x200000) {
-                $chunkLength = min($dataLength - $i, 0x200000);
-                $chunk       = substr($data, $i, $chunkLength);
-                $currentFlag = ($dataLength - $i === $chunkLength) ? $flag | self::FLAG_FINISH : $flag;
+            # 分包压缩
+            $body = snappy_compress($body);
+            $flag = $flag | self::FLAG_COMPRESS;
+            for ($i = 0; $i < $bodyLength; $i += 0x200000) {
+                $chunkLength = min($bodyLength - $i, 0x200000);
+                $chunk       = substr($body, $i, $chunkLength);
+                $currentFlag = ($bodyLength - $i === $chunkLength) ? $flag | self::FLAG_FINISH : $flag;
+                $package     = pack('CNN', $currentFlag, $ver, $headerAndContextLen + $chunkLength) . $headerAndContext . $chunk;
 
-                $rs = $cli->send($msg = pack('CNN', $currentFlag, $ver, $headerAndContextLen + $chunkLength) . $context->headerAndContext . $chunk);
+                $rs = $cli->send($package);
                 if (false === $rs) {
-                    $this->warn("发送RPC数据失败，长度" . strlen($msg));
-                    return;
+                    $this->warn("发送RPC数据失败，长度" . strlen($package));
+                    return false;
                 }
-                $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($msg));
+                $this->debug("发送RPC数据长度 $rs, 实际长度：" . strlen($package));
             }
         }
+        return true;
     }
 
     /**
