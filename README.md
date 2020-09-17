@@ -62,6 +62,36 @@ $service->connectToDev();  // 连到线上测试环境
 
 > 确保你的服务器时间准确并且线上环境需要需要支持SSL支持，执行 `php --ri swoole` 查看，有 openssl 表示ok，或执行 `php -a` 输入 `echo SWOOLE_SSL;` 有512数字表示OK
 
+## Dockerfile
+
+```dockerfile
+FROM php:7.3-cli
+RUN sed -ri "s/(httpredir|deb|security).debian.org/mirrors.aliyun.com/g" /etc/apt/sources.list
+RUN apt-get update \
+    && apt-get install -y libyaml-dev libssl-dev curl librdkafka-dev net-tools iputils-ping git
+
+RUN docker-php-ext-install -j$(nproc) mysqli pdo pdo_mysql \
+    && pecl install msgpack \
+    && pecl install redis \
+    && pecl install yaml \
+    && pecl install hprose \
+    && docker-php-ext-enable msgpack redis yaml hprose
+
+RUN git clone --recursive --depth=1 https://github.com/kjdev/php-ext-snappy.git \
+    && cd php-ext-snappy \
+    && phpize && ./configure && make && make install \
+    && docker-php-ext-enable snappy
+
+# 可指定版本，例如 pecl install swoole-4.4.16
+RUN printf "no\nyes\n" | pecl install swoole \
+    && docker-php-ext-enable swoole \
+#    && echo "swoole.use_shortname = 'Off'" >> /usr/local/etc/php/conf.d/docker-php-ext-swoole.ini
+
+COPY . /usr/src/server
+WORKDIR /usr/src/server
+CMD [ "php", "./bin/server.php"]
+```
+
 ## 更多使用方法
 
 ```php
